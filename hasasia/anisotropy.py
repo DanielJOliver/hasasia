@@ -92,9 +92,6 @@ class Anisotropy(GWBSensitivityCurve):
         self.cosThetaIJ = np.cos(self.thetas[self.first]) * np.cos(self.thetas[self.second]) \
                         + np.sin(self.thetas[self.first]) * np.sin(self.thetas[self.second]) \
                         * np.cos(self.phis[self.first] - self.phis[self.second])
-                        
-        # print(f"First pulsar indices: {self.first}")
-        # print(f"Second pulsar indices: {self.second}")
 
         self.D = num[:,:,:,np.newaxis]/denom[np.newaxis, np.newaxis,:,:]
         if pulsar_term == 'explicit':
@@ -107,8 +104,7 @@ class Anisotropy(GWBSensitivityCurve):
         if pol=='gr':
             self.Fplus = np.einsum('ijkl, ijl ->kl', self.D, self.eplus)
             self.Fcross = np.einsum('ijkl, ijl ->kl', self.D, self.ecross)
-
-            # self.sky_response = self.Fplus**2 + self.Fcross**2
+                        
             self.R_IJ = np.zeros((len(self.first), len(self.Fplus[0])))  # Shape: (N_pairs, NPIX)
 
             for i, (f, s) in enumerate(zip(self.first, self.second)):
@@ -644,35 +640,60 @@ class Anisotropy(GWBSensitivityCurve):
     @property
     def M_kk(self):
         """Fisher Matrix for Anisotropy."""
-        if not hasattr(self, '_M_kk'):
-            self._M_kk = np.sum(self.R_IJ[:,:,np.newaxis]**2 * self.T_IJ[:,np.newaxis,np.newaxis] / self.S_IJ[:,np.newaxis,:], axis=0)
+        if not hasattr(self, '_M_kk'): # Shape (Nfreqs, Npix) -- (IJ, f, k)
+            self._M_kk = np.sum(self.R_IJ[:,np.newaxis,:]**2 * self.T_IJ[:,np.newaxis,np.newaxis] / self.S_IJ[:,:,np.newaxis], axis=0)
         return self._M_kk
+    
+    @property
+    def M_kkp(self):
+        """Fisher Matrix M_{kk', f} for Anisotropy."""
+        if not hasattr(self, '_M_kkp'): # Shape (Nfreqs, Npix, Npix) -- (IJ, f, k, k')
+            self._M_kkp = np.sum(self.R_IJ[:,np.newaxis,:,np.newaxis] * self.R_IJ[:,np.newaxis,np.newaxis,:] * self.T_IJ[:,np.newaxis,np.newaxis,np.newaxis] / self.S_IJ[:,:,np.newaxis,np.newaxis], axis=0)
+        return self._M_kkp
+    
+    @property
+    def S_clean(self):
+        """ Sclean """
+        if not hasattr(self, '_S_clean'): # Shape (Nfreqs, Npix)
+            num = np.sum(self.chiIJ[:,np.newaxis,np.newaxis] * self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,np.newaxis,:] / self.S_IJ[:,:,np.newaxis], axis=0)
+            denom = np.sqrt(np.sum(self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,np.newaxis,:]**2 / self.S_IJ[:,:,np.newaxis], axis=0))
+            self._S_clean = num / denom
+        return self._S_clean
 
     @property
-    def S_h_aniso(self): 
+    def S_clean_new(self):
+        """ Sclean """
+        if not hasattr(self, '_S_clean'): # Shape (Nfreqs, Npix)
+            num = np.sum(self.chiIJ[:,np.newaxis,np.newaxis] * self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,np.newaxis,:] / self.S_IJ[:,:,np.newaxis], axis=0)
+            denom = np.sqrt(np.sum(self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,np.newaxis,:]**2 / self.S_IJ[:,:,np.newaxis], axis=0))
+            self._S_clean = num / denom
+        return self._S_clean
+
+    @property
+    def Seff_A_aniso(self): 
         """Strain power sensitivity."""
-        if not hasattr(self, '_S_h_aniso'):
-            self._S_h_aniso = np.sum(self.chiIJ[:,np.newaxis,np.newaxis] * self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,:,np.newaxis] / self.S_IJ[:,np.newaxis,:], axis=0)
-        return self._S_h_aniso
+        if not hasattr(self, '_Seff_A_aniso'): # Shape (Nfreqs, Npix)
+            self._Seff_A_aniso = np.sum(self.chiIJ[:,np.newaxis,np.newaxis] * self.T_IJ[:,np.newaxis,np.newaxis] * self.R_IJ[:,np.newaxis,:] / self.S_IJ[:,:,np.newaxis], axis=0)
+        return self._Seff_A_aniso
 
     @property
     def S_eff_aniso(self): 
         """Effective Sky Sensitivity."""
-        if not hasattr(self, '_S_eff_aniso'):
-            # self._S_eff_aniso = (((self.S_h_aniso ** 2 / self.M_kk) / np.max(self.T_IJ)) ** (-1)).sum(axis=0) # Gives factor of 18 too low
-            self._S_eff_aniso = (((self.S_h_aniso.sum(axis=0) ** 2 / self.M_kk.sum(axis=0)) / np.max(self.T_IJ)) ** (-1)) # Gives factor of 30 too low
+        if not hasattr(self, '_S_eff_aniso'): # New version Shape (Nfreqs, Npix, Npix)
+            # self._S_eff_aniso = (((self.Seff_A_aniso.sum(axis=0) ** 2 / self.M_kk.sum(axis=0)) / np.max(self.T_IJ)) ** (-1)) # Gives factor of 30 too low
+            self._S_eff_aniso = (self.Seff_A_aniso[:,:,np.newaxis] * (self.M_kkp[:,:,:])**(-1) * self.Seff_A_aniso[:,np.newaxis,:]) # New version
         return self._S_eff_aniso
     
     @property
     def h_c_aniso(self):
         """Characteristic strain sensitivity"""
         if not hasattr(self, '_h_c_aniso'):
-            self._h_c_aniso = np.sqrt(self.freqs * self.S_eff_aniso)
+            self._h_c_aniso = np.sqrt(self.freqs * np.sum(self.S_eff_aniso, axis=(1,2)))
         return self._h_c_aniso
 
     def S_eff_aniso_pixel(self, freq_idx): 
         """Effective Sky Sensitivity at a Specific Frequency for Each Pixel"""
-        return ((self.S_h_aniso[:, freq_idx] ** 2 / self.M_kk[:, freq_idx]) / 
+        return ((self.Seff_A_aniso[:, freq_idx] ** 2 / self.M_kk[:, freq_idx]) / 
                 np.max(self.T_IJ)) ** (-1)  # Shape: (768,)
 
     def h_c_aniso_pixel(self, freq_idx):
