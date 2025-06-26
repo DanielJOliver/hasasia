@@ -677,18 +677,33 @@ class Anisotropy(GWBSensitivityCurve):
         return self._Seff_A_aniso
 
     @property
+    def S_eff_aniso_p(self): 
+        """Effective Sky Sensitivity."""
+        if not hasattr(self, '_S_eff_aniso_p'): # New version Shape (Nfreqs, Npix, Npix)
+            # self._S_eff_aniso = (((self.Seff_A_aniso.sum(axis=0) ** 2 / self.M_kk.sum(axis=0)) / np.max(self.T_IJ)) ** (-1)) # Gives factor of 30 too low
+            self._S_eff_aniso_p = (self.Seff_A_aniso[:,:,np.newaxis] * (self.M_kkp[:,:,:])**(-1) * self.Seff_A_aniso[:,np.newaxis,:]) # New version
+        return self._S_eff_aniso_p
+ 
+    @property
+    def h_c_aniso_p(self):
+        """Characteristic strain sensitivity"""
+        if not hasattr(self, '_h_c_aniso_p'):
+            self._h_c_aniso_p = np.sqrt(self.freqs * np.sum(self.S_eff_aniso_p, axis=(1,2))/self.NPIX)
+        return self._h_c_aniso_p
+    
+    @property
     def S_eff_aniso(self): 
         """Effective Sky Sensitivity."""
-        if not hasattr(self, '_S_eff_aniso'): # New version Shape (Nfreqs, Npix, Npix)
+        if not hasattr(self, '_S_eff_aniso'): # New version Shape (Nfreqs, Npix)
             # self._S_eff_aniso = (((self.Seff_A_aniso.sum(axis=0) ** 2 / self.M_kk.sum(axis=0)) / np.max(self.T_IJ)) ** (-1)) # Gives factor of 30 too low
-            self._S_eff_aniso = (self.Seff_A_aniso[:,:,np.newaxis] * (self.M_kkp[:,:,:])**(-1) * self.Seff_A_aniso[:,np.newaxis,:]) # New version
+            self._S_eff_aniso = self.Seff_A_aniso[:,:] * (self.M_kk[:,:])**(-1) * self.Seff_A_aniso[:,:] # New version
         return self._S_eff_aniso
     
     @property
     def h_c_aniso(self):
         """Characteristic strain sensitivity"""
         if not hasattr(self, '_h_c_aniso'):
-            self._h_c_aniso = np.sqrt(self.freqs * np.sum(self.S_eff_aniso, axis=(1,2)))
+            self._h_c_aniso = np.sqrt(self.freqs * np.sum(self.S_eff_aniso/(self.NPIX*self.T_IJ), axis=1)**(-1/2))
         return self._h_c_aniso
 
     def S_eff_aniso_pixel(self, freq_idx): 
