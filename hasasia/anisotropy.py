@@ -10,7 +10,7 @@ import healpy as hp
 import astropy.units as u
 import astropy.constants as c
 import itertools as it
-from .sensitivity import GWBSensitivityCurve, DeterSensitivityCurve,  resid_response, get_dt
+from .sensitivity import GWBSensitivityCurve, DeterSensitivityCurve,  resid_response, get_dt, get_Tspan
 from .utils import strain_and_chirp_mass_to_luminosity_distance
 
 __all__ = ['SkySensitivity',
@@ -57,6 +57,7 @@ class Anisotropy(GWBSensitivityCurve):
         self.phi_gw = phi_gw
         self.pos = - khat(self.thetas, self.phis)
         self.NPIX = NPIX
+        self.Tspan = get_Tspan(spectra)
         # print("First few phis:", self.phis[:5], "thetas:", self.thetas[:5])
 
         if pulsar_term == 'explicit':
