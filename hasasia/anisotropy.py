@@ -130,9 +130,11 @@ def real_sph_harm_matrix(lmax, theta, phi):
     :math:`-l \le m \le l`, in the convention of Mingarelli et al. (2013):
     :math:`Y_{l,-m}` uses :math:`\sqrt{2}\,\mathrm{Im}[Y_l^{|m|}]`,
     :math:`Y_{l,0} = \mathrm{Re}[Y_l^0]`, and :math:`Y_{l,+m}` uses
-    :math:`\sqrt{2}\,\mathrm{Re}[Y_l^m]` (Condon-Shortley phase). With this
-    normalization, :math:`c_{00} = \sqrt{4\pi}` yields :math:`P(\hat\Omega) = 1`
-    for an isotropic sky.
+    :math:`\sqrt{2}\,\mathrm{Re}[Y_l^m]` (Condon-Shortley phase).  These are
+    the orthonormal real harmonics (:math:`Y_{00} = 1/\sqrt{4\pi}`), for which
+    :math:`c_{00} = \sqrt{4\pi}` yields :math:`P(\hat\Omega) = 1` for an
+    isotropic sky.  ``SphHarmBasis`` rescales them to :math:`Y_{00} = 1`
+    (:math:`c_{00} = 1` for isotropy); see its docstring.
 
     Parameters
     ----------
@@ -277,12 +279,16 @@ class PixelBasis(Basis):
 
 
 class SphHarmBasis(Basis):
-    """Real spherical-harmonic basis (Mingarelli et al. 2013 convention).
+    """Real spherical-harmonic basis (Mingarelli et al. 2013).
 
     Decomposes the sky power as
-    :math:`P(\\hat\\Omega) = \\sum_{l,m} c_{lm} Y_{lm}(\\hat\\Omega)`, with
-    :math:`c_{00} = \\sqrt{4\\pi}` so that :math:`P(\\hat\\Omega) = 1` for
-    an isotropic sky.  See `real_sph_harm_matrix` for the Y_{lm} convention.
+    :math:`P(\\hat\\Omega) = \\sum_{l,m} c_{lm} Y_{lm}(\\hat\\Omega)`, using
+    real spherical harmonics rescaled so that :math:`Y_{00} = 1`
+    (:math:`\\sqrt{4\\pi}` times the orthonormal harmonics returned by
+    `real_sph_harm_matrix`).  In this normalization :math:`c_{00} = 1`
+    recovers :math:`P(\\hat\\Omega) = 1` for an isotropic sky, so the
+    monopole mode is the isotropic sky and its effective sensitivity
+    coincides with the isotropic limit.
     """
     def __init__(self, lmax=None, kappa=None, use_cached_Y=True):
         """
@@ -747,7 +753,7 @@ class Anisotropy(GWBSensitivityCurve):
         if isinstance(strat, PrincipalMapBasis):
             strat = strat.underlying   # normalization follows the underlying basis
         if isinstance(strat, SphHarmBasis):
-            return np.sqrt(4.0 * np.pi) * self.R_IJ
+            return self.R_IJ
         else:
             return self.NPIX * self.R_IJ
 
@@ -761,7 +767,7 @@ class Anisotropy(GWBSensitivityCurve):
         or eigenmode); see the module docstring.
 
         Uses S_I*S_J noise denominator and physical ORF normalization
-        (pixel: NPIX*R_IJ, sph harm: sqrt(4pi)*R_IJ).
+        (pixel: NPIX*R_IJ, sph harm: R_IJ).
 
         Parameters
         ----------
