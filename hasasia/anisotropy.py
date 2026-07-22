@@ -1,17 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Anisotropic gravitational-wave-background sensitivity for pulsar timing arrays.
+r"""Anisotropic gravitational-wave-background sensitivity for pulsar timing arrays.
 
 Builds directional effective sensitivities, sensitivity sky maps, and
 detection SNR forecasts from a list of `hasasia.Spectrum` objects, via the
 per-pulsar-pair Fisher matrix of the cross-correlation statistic.
 
-Naming convention: the suffix ``_fk`` on methods (``M_fk``, ``S_eff_fk``,
-``SNR_fk``, ...) gives the axes of the returned array: frequency ``f`` and
-sky index ``k``. Here ``k`` labels the modes of whichever basis is active,
-the HEALPix pixel index in the pixel basis, ``(l, m)`` pairs in the
-spherical-harmonic bases, and the eigenmode rank in the principal-map basis.
-(In the notation of the accompanying paper, ``k`` is reserved for pixel
-indices, with ``(l, m)`` and ``n`` used for the other bases.)
+Naming convention (matching the accompanying paper): the Fisher matrix is
+``Mcal``, the paper's calligraphic operator :math:`\mathcal{M}(\hat\Omega,
+\hat\Omega';f)` (Eq. 19), spelled out as in ``NcalInv`` for the calligraphic
+:math:`\mathcal{N}^{-1}`. In a given basis ``Mcal`` returns the discrete
+Fisher matrix indexed by that basis's modes, exactly as the paper writes
+them: pixel ``k`` (:math:`M_{kk'}(f)`) in the pixel basis, multipole
+``(l, m)`` (:math:`M^{lm,l'm'}(f)`) in the spherical-harmonic bases, and the
+eigenmode ``n`` (:math:`M_{\mu\nu}(f)`) in the principal-map basis. The suffix
+``_fk`` on the roman-symbol methods (``S_eff_fk``, ``SNR_fk``, ...) gives the
+axes of the returned array: frequency ``f`` and the active-basis mode (``k`` /
+``(l, m)`` / ``n`` as above). The observing time :math:`T_\mathrm{obs}` is
+folded into ``Mcal`` as in the paper (Eq. 19), so ``Mcal`` returns
+:math:`\mathcal{M}` directly and the effective sensitivities read
+:math:`S_\mathrm{eff}=\sqrt{1/\mathcal{M}}` (Eqs. 20-21) without an explicit
+:math:`T_\mathrm{obs}`.
 """
 from __future__ import annotations
 import numpy as np
@@ -410,17 +418,18 @@ class SphHarmBasis(Basis):
         self.labels = labels
         return {"R_IJ": R_IJ_lm, "labels": labels, "lmax_used": lmax}
 
-    def alms_from_Pk(self, A, P_k):
+    def clm_from_Pk(self, A, P_k):
         """
-        Project pixel sky P_k (sum 1) to a_lm with inner product (1/NPIX) Σ.
-        Returns a_lm, labels.
+        Project a pixel sky map P_k onto the spherical-harmonic power
+        coefficients c_lm (paper Eq. 36) via the inner product (1/NPIX) Σ_k.
+        Returns c_lm, labels.
         """
         P_k = np.asarray(P_k, float)
         P_k = P_k / P_k.sum()
         lmax = self._lmax_used if self._lmax_used is not None else self._choose_lmax(A)
         Ylm, labels = self._get_Ylm_matrix(A, lmax)
-        a_lm = (1.0 / A.NPIX) * (Ylm @ P_k)
-        return a_lm, labels
+        c_lm = (1.0 / A.NPIX) * (Ylm @ P_k)
+        return c_lm, labels
 
 
 class SqrtSHBasis(SphHarmBasis):
@@ -516,7 +525,7 @@ class PrincipalMapBasis(Basis):
     isotropic limit; AH2020 Eq. 72).
 
     ``build_response`` delegates to the underlying basis so the existing
-    :meth:`Anisotropy.M_fk` machinery is reused unchanged; the
+    :meth:`Anisotropy.Mcal` machinery is reused unchanged; the
     eigendecomposition is performed on demand by
     :meth:`Anisotropy.principal_modes_fk`, :meth:`Anisotropy.S_eff_pm_fk`
     and :meth:`Anisotropy.principal_map_skymap`.
@@ -540,7 +549,7 @@ class PrincipalMapBasis(Basis):
     __str__ = __repr__
 
     def build_response(self, A):
-        """Delegate to the underlying basis so ``M_fk`` uses its response.
+        """Delegate to the underlying basis so ``Mcal`` uses its response.
 
         The principal-map eigendecomposition is applied on top of the
         underlying basis's Fisher matrix by the ``Anisotropy`` methods;
@@ -588,7 +597,7 @@ class Anisotropy(GWBSensitivityCurve):
 
     Notes
     -----
-    The principal user-facing methods are `M_fk`, `S_eff_fk`, `SNR_fk`,
+    The principal user-facing methods are `Mcal`, `S_eff_fk`, `SNR_fk`,
     `S_clean`, `radiometer`, `SNR_total`, and `injection`.
     """
     def __init__(self, spectra, theta_gw, phi_gw, basis='pixel', pol='gr', pulsar_term=False, NSIDE=None, lmax=None, underlying='pixel'):
@@ -757,23 +766,30 @@ class Anisotropy(GWBSensitivityCurve):
         else:
             return self.NPIX * self.R_IJ
 
-    def M_fk(self, diag=True, freqs_idx=None):
-        """
-        Fisher matrix per pixel/mode per frequency.
+    def Mcal(self, diag=True, freqs_idx=None):
+        r"""Directional Fisher matrix :math:`\mathcal{M}(\hat\Omega,\hat\Omega';f)` (paper Eq. 19).
 
-        M_kk'(f) = sum_IJ T_IJ * R_phys(IJ,k) * R_phys(IJ,k') / (S_I(f) * S_J(f))
+        .. math::
+            \mathcal{M}_{kk'}(f) = \sum_{I<J} \frac{T_{IJ}}{T_\mathrm{obs}}\,
+            \frac{\mathcal{R}_{IJ}(\hat\Omega_k)\,\mathcal{R}_{IJ}(\hat\Omega_{k'})}
+            {S_I(f)\,S_J(f)}
 
-        The index k labels the modes of the active basis (pixel, (l, m),
-        or eigenmode); see the module docstring.
+        The observing time :math:`T_\mathrm{obs}` is folded in, so this returns
+        the paper's calligraphic :math:`\mathcal{M}` directly.  In the active
+        basis the returned matrix is indexed by that basis's modes, matching
+        the paper: :math:`M_{kk'}(f)` over pixels ``k`` (pixel basis),
+        :math:`M^{lm,l'm'}(f)` over multipoles ``(l, m)`` (spherical-harmonic
+        bases), and :math:`M_{\mu\nu}(f)` over the underlying modes (eigenmode
+        ``n``) in the principal-map basis.
 
-        Uses S_I*S_J noise denominator and physical ORF normalization
-        (pixel: NPIX*R_IJ, sph harm: R_IJ).
+        Uses the :math:`S_I S_J` noise denominator and the physical ORF
+        normalization (pixel: ``NPIX*R_IJ``, sph harm: ``R_IJ``).
 
         Parameters
         ----------
         diag : bool
-            If True (default), return diagonal M_kk only (fast).
-            If False, return full matrix M_kk'(f) (per-frequency loop).
+            If True (default), return the diagonal :math:`\mathcal{M}_{kk}(f)`
+            only (fast).  If False, return the full matrix (per-frequency loop).
         freqs_idx : array-like or None
             Frequency indices to compute. None = all frequencies.
             Only used when diag=False.
@@ -790,7 +806,7 @@ class Anisotropy(GWBSensitivityCurve):
         eigenvalues.  Use :meth:`principal_modes_fk` for the eigenvalues and
         principal maps, and :meth:`S_eff_pm_fk` for the per-mode sensitivity.
         """
-        W_if = self.T_IJ[:, None] / self.S_IJ**2
+        W_if = self.T_IJ[:, None] / (self.Tspan * self.S_IJ**2)
         R_phys = self._R_phys()
 
         if diag:
@@ -808,13 +824,14 @@ class Anisotropy(GWBSensitivityCurve):
 
         return M_full
 
-    def M_inv_diag_fk(self, freqs_idx=None, rcond=1e-10):
-        """
-        Diagonal of the inverse Fisher matrix per frequency.
+    def Mcal_inv_diag(self, freqs_idx=None, rcond=1e-10):
+        r"""Diagonal of the inverse Fisher matrix :math:`[\mathcal{M}^{-1}(f)]_{kk}` per frequency.
 
-        sigma^2_k(f) = [M^{-1}(f)]_kk — the variance on the clean-map
-        estimate at pixel k, accounting for inter-pixel correlations.
-        Uses SVD-regularized pseudo-inverse (Grunthal+2025 §3.7 approach).
+        The full-Fisher variance term: :math:`[\mathcal{M}^{-1}(f)]_{kk}`, whose
+        square root is the full-Fisher sensitivity (Eq. 21) and, scaled by
+        :math:`1/\sqrt{T_\mathrm{obs}}`, the clean-map uncertainty (Eq. 29).
+        :math:`T_\mathrm{obs}` is folded into :math:`\mathcal{M}` (see
+        :meth:`Mcal`).  Uses an SVD-regularized pseudo-inverse.
 
         Parameters
         ----------
@@ -827,12 +844,12 @@ class Anisotropy(GWBSensitivityCurve):
         Returns
         -------
         ndarray, shape (Nf_out, Nmodes)
-            Diagonal of M^{-1} at each frequency.
+            Diagonal of :math:`\mathcal{M}^{-1}` at each frequency.
         """
         # Build and invert one (Nmodes, Nmodes) Fisher matrix at a time
         # rather than materializing the full (Nf, Nmodes, Nmodes) stack,
         # which for many frequencies in the pixel basis can reach several GB.
-        W_if = self.T_IJ[:, None] / self.S_IJ**2
+        W_if = self.T_IJ[:, None] / (self.Tspan * self.S_IJ**2)
         R_phys = self._R_phys()
         fidxs = (np.arange(W_if.shape[1]) if freqs_idx is None
                  else np.atleast_1d(np.asarray(freqs_idx)))
@@ -850,17 +867,18 @@ class Anisotropy(GWBSensitivityCurve):
         return result
 
     def S_eff_fk(self, diag=True, freqs_idx=None, rcond=1e-10):
-        """
-        Effective per-pixel/mode sensitivity.
+        r"""Directional per-mode effective sensitivity.
 
-        The index k labels the modes of the active basis (pixel, (l, m),
-        or eigenmode); see the module docstring.
+        The mode axis indexes the active basis, matching the paper: pixel ``k``
+        (Eqs. 20/34), multipole ``(l, m)`` (Eqs. 38/39), or eigenmode ``n``.
+        With :math:`T_\mathrm{obs}` folded into :math:`\mathcal{M}` (see
+        :meth:`Mcal`), the two estimators read directly as in the paper:
 
-        With diag=True (radiometer):
-            S_eff(f, k) = sqrt(T_obs / M_kk(f))
+        With diag=True (radiometer, Eq. 20):
+            :math:`S_\mathrm{eff}^\mathrm{rad}(f) = \sqrt{1/\mathcal{M}_{kk}(f)}`
 
-        With diag=False (full Fisher):
-            S_eff(f, k) = sqrt(T_obs * [M^{-1}]_kk(f))
+        With diag=False (full Fisher, Eq. 21):
+            :math:`S_\mathrm{eff}^\mathrm{full}(f) = \sqrt{[\mathcal{M}^{-1}]_{kk}(f)}`
 
         Parameters
         ----------
@@ -877,18 +895,69 @@ class Anisotropy(GWBSensitivityCurve):
         -----
         In the ``'principal_map'`` basis this dispatches to
         :meth:`S_eff_pm_fk`, returning the per-eigenmode sensitivity
-        ``sqrt(T_obs / lambda_n)``; ``diag`` is ignored since the two
-        estimators coincide.
+        :math:`1/\sqrt{\lambda_n}=\Sigma_n` (Eq. 47); ``diag`` is ignored
+        since the two estimators coincide.
         """
         if isinstance(self.basis_strategy, PrincipalMapBasis):
             return self.S_eff_pm_fk(freqs_idx=freqs_idx, rcond=rcond)
         if diag:
-            M_kk = self.M_fk(diag=True)
-            S_safe = np.clip(M_kk / self.Tspan, 1e-30, None)
-            return S_safe**(-1/2)
+            M_kk = self.Mcal(diag=True)
+            return np.clip(M_kk, 1e-30, None)**(-1/2)
         else:
-            M_inv_kk = self.M_inv_diag_fk(freqs_idx=freqs_idx, rcond=rcond)
-            return np.sqrt(self.Tspan * np.clip(M_inv_kk, 0.0, None))
+            M_inv_kk = self.Mcal_inv_diag(freqs_idx=freqs_idx, rcond=rcond)
+            return np.sqrt(np.clip(M_inv_kk, 0.0, None))
+
+    def S_eff_P(self, Pk, normalize='npix', freqs_idx=None):
+        r"""Sky-weighted effective sensitivity :math:`S_\mathrm{eff}(f)` for a given sky (paper Eq. 22).
+
+        The effective strain-noise for detecting the specified angular power
+        :math:`P(\hat\Omega)`, obtained by contracting the Fisher operator with
+        the sky on both sides,
+
+        .. math::
+            \frac{1}{S_\mathrm{eff}^2(f)}
+            = \iint \frac{d^2\hat\Omega\,d^2\hat\Omega'}{(4\pi)^2}\,
+              P(\hat\Omega)\,\mathcal{M}(\hat\Omega,\hat\Omega';f)\,P(\hat\Omega')
+            = \sum_{I<J} \frac{T_{IJ}}{T_\mathrm{obs}}\,
+              \frac{\Gamma_{IJ}^2(f)}{S_I(f)\,S_J(f)},
+
+        with the sky-weighted overlap reduction function
+        :math:`\Gamma_{IJ} = \int (d^2\hat\Omega/4\pi)\,\mathcal{R}_{IJ}(\hat\Omega)P(\hat\Omega)`.
+        A single curve for the whole sky ``Pk`` (a function of ``f`` only, no
+        mode index), requiring no inversion of the Fisher matrix.
+
+        This is the anisotropic generalization of the isotropic
+        :meth:`hasasia.sensitivity.GWBSensitivityCurve.S_eff`: for an isotropic
+        sky (``Pk = 1``) it reduces to that curve (paper Eq. 23 / HRS19 Eq. 89),
+        and ``SNR^2 = 2 T_obs int (S_h/S_eff)^2 df`` recovers :meth:`SNR_total`
+        with ``diag=False``.
+
+        Requires the pixel basis (``Pk`` is a HEALPix sky map).
+
+        Parameters
+        ----------
+        Pk : ndarray, shape (NPIX,)
+            Sky power map.
+        normalize : {'npix', 'prob'}
+            Convention of ``Pk`` (see :meth:`SNR_fk`).
+        freqs_idx : array-like or None
+            Frequency indices to compute. None = all frequencies.
+
+        Returns
+        -------
+        ndarray, shape (Nfreqs,) or (len(freqs_idx),)
+            :math:`S_\mathrm{eff}(f)` for the specified sky.
+        """
+        if not isinstance(self.basis_strategy, PixelBasis):
+            raise RuntimeError("S_eff_P requires the pixel basis (Pk is a sky "
+                               "map); call set_basis('pixel') first.")
+        Pk = _rescale_pk(np.asarray(Pk, dtype=float), normalize, self.NPIX)
+        Gamma = self.R_IJ @ Pk                               # Gamma_IJ = int dOmega/4pi R_IJ P
+        W = (self.T_IJ / self.Tspan)[:, None] / self.S_IJ**2  # (Npair, Nfreq)
+        if freqs_idx is not None:
+            W = W[:, np.atleast_1d(freqs_idx)]
+        inv_s2 = (Gamma[:, None]**2 * W).sum(axis=0)          # 1/S_eff^2(f)
+        return 1.0 / np.sqrt(np.clip(inv_s2, 1e-300, None))
 
     def principal_modes_fk(self, freqs_idx=None, rcond=1e-10, return_vectors=False):
         r"""Principal maps (Fisher eigenmaps) per frequency.
@@ -933,7 +1002,7 @@ class Anisotropy(GWBSensitivityCurve):
             Principal maps in underlying-basis coordinates (rows).  Only
             returned when ``return_vectors=True``.
         """
-        W_if = self.T_IJ[:, None] / self.S_IJ**2
+        W_if = self.T_IJ[:, None] / (self.Tspan * self.S_IJ**2)
         R_phys = self._R_phys()                      # (Npair, Nmodes)
         fidxs = (np.arange(W_if.shape[1]) if freqs_idx is None
                  else np.atleast_1d(np.asarray(freqs_idx)))
@@ -961,11 +1030,13 @@ class Anisotropy(GWBSensitivityCurve):
     def S_eff_pm_fk(self, freqs_idx=None, rcond=1e-10):
         r"""Per-eigenmode effective sensitivity in the principal-map basis.
 
-        :math:`S_\mathrm{eff}(f,n) = \sqrt{T_\mathrm{obs}/\lambda_n(f)}`,
-        a single value per mode since the radiometer and full-Fisher
-        estimators coincide in the Fisher eigenbasis.  Columns are ordered
-        most- to least-sensitive; below-cutoff (unconstrained) modes return
-        ``inf``.
+        :math:`S_\mathrm{eff}(f,n) = 1/\sqrt{\lambda_n(f)} = \Sigma_n(f)`
+        (paper Eq. 47), a single value per mode since the radiometer and
+        full-Fisher estimators coincide in the Fisher eigenbasis.  The
+        eigenvalues :math:`\lambda_n` are those of :math:`\mathcal{M}` with
+        :math:`T_\mathrm{obs}` folded in (see :meth:`Mcal`).  Columns are
+        ordered most- to least-sensitive; below-cutoff (unconstrained) modes
+        return ``inf``.
 
         Parameters
         ----------
@@ -980,7 +1051,7 @@ class Anisotropy(GWBSensitivityCurve):
         """
         lambdas, _ = self.principal_modes_fk(freqs_idx=freqs_idx, rcond=rcond)
         with np.errstate(divide='ignore'):
-            return np.sqrt(self.Tspan / lambdas)   # lambda = 0 -> inf
+            return np.sqrt(1.0 / lambdas)   # Sigma_n = 1/sqrt(lambda_n); lambda = 0 -> inf
 
     def principal_map_skymap(self, n, fidx, rcond=1e-10, fix_sign=True):
         r"""Reconstruct principal map ``n`` at frequency index ``fidx`` as a pixel map.
@@ -1035,14 +1106,15 @@ class Anisotropy(GWBSensitivityCurve):
         The index k labels the modes of the active basis (pixel, (l, m),
         or eigenmode); see the module docstring.
 
-        With diag=True (radiometer):
-            SNR(f, k) = sqrt( (2/NPIX^2) * S_h^2(f) * P_k^2 * M_kk(f) )
+        With diag=True (radiometer, paper Eq. 26 integrand):
+            SNR(f, k) = sqrt( (2 T_obs / NPIX^2) * S_h^2(f) * P_k^2 * Mcal_kk(f) )
 
         With diag=False (full Fisher):
-            SNR(f, k) = sqrt( (1/NPIX^2) * (S_h * P_k)^2 / [M^{-1}]_kk )
+            SNR(f, k) = |S_h(f) P_k| / ( NPIX^2 * sqrt( [Mcal^{-1}]_kk / T_obs ) )
 
-        The 1/NPIX^2 arises because R_IJ^k = R(Omega_k)/NPIX carries
-        one factor of 1/NPIX, and the SNR involves the signal squared.
+        with T_obs folded into Mcal (see :meth:`Mcal`).  The 1/NPIX^2 arises
+        because R_IJ^k = R(Omega_k)/NPIX carries one factor of 1/NPIX, and the
+        SNR involves the signal squared.
 
         Parameters
         ----------
@@ -1057,7 +1129,7 @@ class Anisotropy(GWBSensitivityCurve):
             Convention of the input ``Pk``.
             - 'npix' (default): sum(Pk) == NPIX (literature convention;
               consistent with ``injection(normalize='npix')`` and
-              ``M_fk``).
+              ``Mcal``).
             - 'prob': sum(Pk) == 1 (probability mass); internally
               rescaled by NPIX so the returned SNR matches 'npix'.
         freqs_idx : array-like or None
@@ -1068,13 +1140,13 @@ class Anisotropy(GWBSensitivityCurve):
         Sh = np.asarray(Sh, dtype=float)
         Pk = _rescale_pk(np.asarray(Pk, dtype=float), normalize, self.NPIX)
         if diag:
-            M_kk = self.M_fk(diag=True)
-            return np.sqrt(2.0 * (Sh[:, None]**2) * (Pk[None, :]**2) * M_kk / self.NPIX**2)
+            M_kk = self.Mcal(diag=True)
+            return np.sqrt(2.0 * self.Tspan * (Sh[:, None]**2) * (Pk[None, :]**2) * M_kk / self.NPIX**2)
         else:
-            M_inv_kk = self.M_inv_diag_fk(freqs_idx=freqs_idx, rcond=rcond)
+            M_inv_kk = self.Mcal_inv_diag(freqs_idx=freqs_idx, rcond=rcond)
             Sh_sel = Sh[freqs_idx] if freqs_idx is not None else Sh
             P_clean = Sh_sel[:, None] * Pk[None, :]
-            sigma = np.sqrt(np.clip(M_inv_kk, 0.0, None))
+            sigma = np.sqrt(np.clip(M_inv_kk, 0.0, None) / self.Tspan)
             return np.abs(P_clean / np.clip(sigma, 1e-30, None)) / self.NPIX**2
 
     def S_clean(self, Pk, Sh, diag=True, normalize='npix', freqs_idx=None, rcond=1e-10):
@@ -1094,11 +1166,11 @@ class Anisotropy(GWBSensitivityCurve):
         (diagonal Fisher only).  With diag=False, uses the full Fisher
         matrix with SVD-regularized inversion.
 
-        Formulas:
-            P'_k    = S_h * P_k                       (expected clean map)
-            sigma_k = 1/sqrt(M_kk)  [diag=True]       (per-pixel uncertainty)
-                    = sqrt([M^{-1}]_kk)  [diag=False]
-            snr_k   = P'_k / sigma_k                   (map significance)
+        Formulas (T_obs folded into Mcal; paper Eqs. 29, 43):
+            P'_k    = S_h * P_k                            (expected clean map)
+            sigma_k = 1/sqrt(T_obs * Mcal_kk)  [diag=True] (per-pixel uncertainty)
+                    = sqrt([Mcal^{-1}]_kk / T_obs)  [diag=False]
+            snr_k   = P'_k / sigma_k                        (map significance)
 
         Parameters
         ----------
@@ -1123,14 +1195,14 @@ class Anisotropy(GWBSensitivityCurve):
         """
         Pk = _rescale_pk(np.asarray(Pk, dtype=float), normalize, self.NPIX)
         if diag:
-            M_kk = self.M_fk(diag=True)
+            M_kk = self.Mcal(diag=True)
             P_clean = Sh[:, None] * Pk[None, :]
-            sigma = 1.0 / np.sqrt(np.clip(M_kk, 1e-30, None))
+            sigma = 1.0 / np.sqrt(np.clip(self.Tspan * M_kk, 1e-30, None))
         else:
-            M_inv_kk = self.M_inv_diag_fk(freqs_idx=freqs_idx, rcond=rcond)
+            M_inv_kk = self.Mcal_inv_diag(freqs_idx=freqs_idx, rcond=rcond)
             Sh_sel = Sh[freqs_idx] if freqs_idx is not None else Sh
             P_clean = Sh_sel[:, None] * Pk[None, :]
-            sigma = np.sqrt(np.clip(M_inv_kk, 0.0, None))
+            sigma = np.sqrt(np.clip(M_inv_kk, 0.0, None) / self.Tspan)
 
         snr = P_clean / np.clip(sigma, 1e-30, None)
         return P_clean, sigma, snr
@@ -1151,10 +1223,10 @@ class Anisotropy(GWBSensitivityCurve):
         is the standard PTA sky-map estimator in Konstandin+2026 Eq. (3.16)
         and Chen+2026 Eqs. 17-18, 20.
 
-        In forecasting mode (known signal):
-            P_hat_k(f) = S_h(f) * P_k           (expected recovered map)
-            sigma_k(f) = 1 / sqrt(M_kk(f))      (per-pixel uncertainty)
-            snr_k(f)   = P_hat * sqrt(M_kk)      (map significance, NOT detection SNR)
+        In forecasting mode (known signal; T_obs folded into Mcal, paper Eq. 43):
+            P_hat_k(f) = S_h(f) * P_k                  (expected recovered map)
+            sigma_k(f) = 1 / sqrt(T_obs * Mcal_kk(f))  (per-pixel uncertainty)
+            snr_k(f)   = P_hat * sqrt(T_obs * Mcal_kk) (map significance, NOT detection SNR)
 
         Parameters
         ----------
@@ -1189,13 +1261,15 @@ class Anisotropy(GWBSensitivityCurve):
 
         Two modes:
 
-        1. diag=True (radiometer):
-            SNR^2_total = (2/NPIX^2) * sum_f S_h^2(f) * sum_k P_k^2 * M_kk(f) * df
+        1. diag=True (radiometer, paper Eq. 26):
+            SNR^2_total = (2 T_obs/NPIX^2) * sum_f S_h^2(f) * sum_k P_k^2 * Mcal_kk(f) * df
 
-        2. diag=False (full Fisher):
-            SNR^2_total = (2/NPIX^2) * sum_f S_h^2(f) * P^T M(f) P * df
+        2. diag=False (full Fisher, paper Eq. 25):
+            SNR^2_total = (2 T_obs/NPIX^2) * sum_f S_h^2(f) * P^T Mcal(f) P * df
             Uses the full Fisher matrix including off-diagonal
-            correlations.  Always >= radiometer (Cauchy-Schwarz).
+            correlations.  Always >= radiometer (Cauchy-Schwarz).  T_obs is
+            folded into Mcal (see :meth:`Mcal`), giving the paper's explicit
+            2 T_obs prefactor.
 
         The 1/NPIX^2 arises because the pixel response R_IJ^k = R(Omega_k)/NPIX
         carries one factor of 1/NPIX, and the SNR involves the signal squared.
@@ -1240,19 +1314,19 @@ class Anisotropy(GWBSensitivityCurve):
             Sh = Sh[freqs_idx]
 
         if diag:
-            # Radiometer: sum_k P_k^2 * M_kk(f)
-            M_kk = self.M_fk(diag=True)
+            # Radiometer: sum_k P_k^2 * Mcal_kk(f)
+            M_kk = self.Mcal(diag=True)
             if freqs_idx is not None:
                 M_kk = M_kk[freqs_idx]
-            snr2_f = 2.0 * Sh**2 * np.sum(Pk**2 * M_kk, axis=1) / self.NPIX**2
+            snr2_f = 2.0 * self.Tspan * Sh**2 * np.sum(Pk**2 * M_kk, axis=1) / self.NPIX**2
         else:
-            # Full Fisher: P^T M(f) P at each frequency
+            # Full Fisher: P^T Mcal(f) P at each frequency
             nf = len(f)
             snr2_f = np.zeros(nf)
             fidx_list = freqs_idx if freqs_idx is not None else range(len(self.freqs))
             for i, fi in enumerate(fidx_list):
-                M_full = self.M_fk(diag=False, freqs_idx=[fi])[0]  # (NPIX, NPIX)
-                snr2_f[i] = 2.0 * Sh[i]**2 * Pk @ M_full @ Pk / self.NPIX**2
+                M_full = self.Mcal(diag=False, freqs_idx=[fi])[0]  # (NPIX, NPIX)
+                snr2_f[i] = 2.0 * self.Tspan * Sh[i]**2 * Pk @ M_full @ Pk / self.NPIX**2
 
         # Integrate over frequency (trapezoid)
         df = np.diff(f)
@@ -1262,13 +1336,15 @@ class Anisotropy(GWBSensitivityCurve):
 
     @property
     def h_c(self):
-        r"""Characteristic-strain sensitivity, shape (N_freq, N_modes).
+        r"""Directional characteristic-strain sensitivity, shape (N_freq, N_modes).
 
-        Computed as :math:`h_c(f, k) = \sqrt{f \cdot S_\mathrm{eff}(f, k)}`
-        with the radiometer (diagonal-Fisher) `S_eff` by default.
+        Per-mode radiometer characteristic strain (paper Eq. 49),
+        :math:`h_c^\mathrm{rad}(f,\hat\Omega_k)=\sqrt{f\,S_\mathrm{eff}^\mathrm{rad}(f,\hat\Omega_k)}`,
+        built from the diagonal-Fisher :meth:`S_eff_fk`.  The mode axis follows
+        the active basis (pixel ``k`` / multipole ``(l, m)`` / eigenmode ``n``).
         """
-        if not hasattr(self, '_h_c'):
-            self._h_c = np.sqrt(self.freqs[:,np.newaxis] * self.S_eff)
+        if getattr(self, '_h_c', None) is None:
+            self._h_c = np.sqrt(self.freqs[:, np.newaxis] * self.S_eff_fk(diag=True))
         return self._h_c
 
     def injection(

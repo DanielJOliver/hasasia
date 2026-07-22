@@ -80,11 +80,11 @@ def test_set_basis_rebuilds(ASM):
 # ---------------------------------------------------------------------------
 # Fisher matrix and effective sensitivity
 # ---------------------------------------------------------------------------
-def test_M_fk_shapes_and_symmetry(ASM):
-    M_diag = ASM.M_fk(diag=True)
+def test_Mcal_shapes_and_symmetry(ASM):
+    M_diag = ASM.Mcal(diag=True)
     assert M_diag.shape == (len(ASM.freqs), NPIX)
     assert np.all(M_diag >= 0)
-    M_full = ASM.M_fk(diag=False, freqs_idx=[len(ASM.freqs) // 2])
+    M_full = ASM.Mcal(diag=False, freqs_idx=[len(ASM.freqs) // 2])
     assert M_full.shape == (1, NPIX, NPIX)
     np.testing.assert_allclose(M_full[0], M_full[0].T, rtol=1e-10, atol=0)
 
@@ -147,7 +147,7 @@ def test_principal_modes_match_eigh(spectra, sky):
     A = haniso.Anisotropy(spectra, tg, pg, NSIDE=NSIDE, basis='principal_map')
     fi = len(A.freqs) // 2
     lam, sig, V = A.principal_modes_fk(freqs_idx=[fi], return_vectors=True)
-    M = A.M_fk(diag=False, freqs_idx=[fi])[0]
+    M = A.Mcal(diag=False, freqs_idx=[fi])[0]
     eig = np.sort(np.linalg.eigh(M)[0])[::-1]
     K = lam.shape[1]
     np.testing.assert_allclose(lam[0], eig[:K], rtol=1e-6,
@@ -174,7 +174,7 @@ def test_principal_map_snr_reconstructs_quadratic(spectra, sky):
     A = haniso.Anisotropy(spectra, tg, pg, NSIDE=NSIDE, basis='principal_map')
     fi = len(A.freqs) // 2
     lam, _, V = A.principal_modes_fk(freqs_idx=[fi], return_vectors=True)
-    M = A.M_fk(diag=False, freqs_idx=[fi])[0]
+    M = A.Mcal(diag=False, freqs_idx=[fi])[0]
     Pk = np.ones(NPIX)
     a = V[0] @ Pk
     lhs = float(np.sum(lam[0] * a ** 2))
