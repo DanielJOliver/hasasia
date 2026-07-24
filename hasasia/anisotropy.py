@@ -249,11 +249,13 @@ class PixelBasis(Basis):
 
     def pixel_orf(self, P_k=None, normalize='npix'):
         """
-        Effective ORF contraction: Γ_IJ = Σ_k R_IJ(k) * P_k.
+        Effective ORF contraction: Γ_IJ = Σ_k R_IJ^k P_k.
 
-        Internally normalises P_k to sum=1 (probability) before the
-        contraction, so the returned Γ_IJ is in physical ORF units
-        (comparable to χ_IJ for an isotropic sky).
+        The cached R_IJ^k carries the (1/NPIX) HEALPix quadrature weight (see
+        build_response), so P_k is rescaled to the internal 'npix' convention
+        (sum == NPIX) via _rescale_pk before the contraction.  The returned
+        Γ_IJ is in physical ORF units: for an isotropic sky it reproduces the
+        Hellings-Downs coefficient χ_IJ.
 
         Parameters
         ----------
@@ -261,8 +263,8 @@ class PixelBasis(Basis):
             Sky power distribution.  If None, uses the cached P_k.
         normalize : {'npix', 'prob'}
             Convention of the input P_k.
-            'npix' (default): sum(P_k) == NPIX.  Divided by NPIX internally.
-            'prob': sum(P_k) == 1.  Used as-is.
+            'npix' (default): sum(P_k) == NPIX (P == 1 is isotropic).  Used as-is.
+            'prob': sum(P_k) == 1.  Rescaled to the 'npix' convention (× NPIX).
         """
         if self.R_IJ is None:
             raise RuntimeError("R_IJ is not built. Call build_response(A) first.")
@@ -276,10 +278,9 @@ class PixelBasis(Basis):
         if P_k.shape[-1] != self.NPIX:
             raise ValueError(f"P_k has length {P_k.size}, but NPIX={self.NPIX}.")
 
-        if normalize.lower() == 'npix':
-            P_k = P_k / self.NPIX
-        elif normalize.lower() != 'prob':
-            raise ValueError("normalize must be 'npix' or 'prob'")
+        # R_IJ carries the (1/NPIX) quadrature weight, so P_k only needs to be
+        # in the 'npix' convention before the contraction.
+        P_k = _rescale_pk(P_k, normalize, self.NPIX)
 
         Gamma_IJ = self.R_IJ @ P_k  # (Npair,)
         return Gamma_IJ
